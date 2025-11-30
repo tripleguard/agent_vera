@@ -1,0 +1,50 @@
+{
+  "model": {
+    "path": "auto",
+    "ctx_size": 8192,
+    "temperature": 0.3,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "repeat_penalty": 1.1,
+    "max_tokens": 0,
+    "seed": 42,
+    "chat_format": "chatml"
+  },
+  "vosk": {
+    "model_path": "vosk-model-small-ru-0.22",
+    "samplerate": 16000
+  },
+  "activation_word": "Вера",
+  "silence_timeout": 2,
+  "tts": {
+    "voice_index": 3,
+    "rate": 180,
+    "volume": 0.8
+  },
+  "commands": {},
+  "sites": {
+    "ютуб": "https://www.youtube.com/",
+    "хабр": "https://habr.com/ru/",
+    "вк": "https://vk.com/"
+  },
+  "web_search": {
+    "temperature": 0,
+    "top_p": 0.9,
+    "max_sources": 3,
+    "page_timeout_sec": 2.5,
+    "per_page_limit": 900,
+    "llm_max_tokens": 256,
+    "oversample_links_factor": 2,
+    "oversample_candidates_factor": 2,
+    "log_page_errors": false,
+    "max_bytes_per_page": 60000,
+    "disable_time_limits": true,
+    "total_context_limit": 2700,
+    "news_max_age_days": 7,
+    "cache_ttl_sec": 600,
+    "cache_max_entries": 100,
+    "early_stop_min_sources": 3,
+    "early_stop_timeout": 4.0
+  }
+}

@@ -1,0 +1,15 @@
+vosk
+pyttsx3
+sounddevice
+psutil
+requests
+beautifulsoup4
+pycaw
+comtypes
+llama-cpp-python
+pywin32
+win11toast
+screen-brightness-control
+Pillow
+pystray
+aiohttp
