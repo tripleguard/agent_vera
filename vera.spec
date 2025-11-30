@@ -98,7 +98,6 @@ project_datas = [
     # Ресурсы main
     ('main/system_prompt.txt', 'main'),
     ('main/lang_ru.py', 'main'),
-    ('main/paths.py', 'main'),
 ]
 
 # Модели будут скопированы отдельно (не в bundle) - см. build.bat
