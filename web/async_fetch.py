@@ -1,8 +1,3 @@
-"""
-Асинхронная загрузка веб-страниц с использованием aiohttp.
-Заменяет ThreadPoolExecutor на настоящий async/await для лучшей производительности.
-"""
-
 import asyncio
 import aiohttp
 from typing import List, Tuple
@@ -48,23 +43,7 @@ async def fetch_urls_async(
     early_stop_min: int,
     early_stop_timeout: float
 ) -> List[Tuple[str, str]]:
-    """
-    Асинхронная загрузка нескольких URL с early stopping.
-    
-    Останавливается когда:
-    - Собрали max_sources успешных источников
-    - Собрали минимум early_stop_min источников и прошло early_stop_timeout секунд
-    
-    Args:
-        urls: Список URL для загрузки
-        max_sources: Максимум успешных источников
-        timeout: Таймаут на один URL
-        early_stop_min: Минимум источников для early stop
-        early_stop_timeout: Время для early stop
-    
-    Returns:
-        Список (url, text) успешно загруженных источников
-    """
+
     results = []
     start_time = asyncio.get_event_loop().time()
     
@@ -106,10 +85,6 @@ async def fetch_urls_async(
 
 
 def fetch_urls_sync(urls: List[str], **kwargs) -> List[Tuple[str, str]]:
-    """
-    Синхронная обертка для async функции.
-    Использует asyncio.run() для корректного управления event loop.
-    """
     try:
         # Проверяем, есть ли уже запущенный loop (например, в Jupyter)
         loop = asyncio.get_running_loop()
