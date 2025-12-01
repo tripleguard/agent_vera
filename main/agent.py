@@ -699,8 +699,6 @@ def run_main_loop():
                     listening_for_command = False
     
     # Главный цикл завершен
-    from main.tray import stop_tray
-    stop_tray()
     sys.exit(0)
 
 

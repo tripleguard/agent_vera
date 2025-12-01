@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Vera Voice Assistant - Entry Point
-Точка входа для PyInstaller и прямого запуска.
-"""
-
 import sys
 import os
 import json
@@ -170,8 +163,6 @@ if __name__ == "__main__":
     # Создаем ярлык при первом запуске (только для exe)
     create_desktop_shortcut()
     
-    # Запускаем иконку в трее и главный цикл агента
-    from main.tray import start_tray
+    # Запускаем главный цикл агента
     from main import agent
-    start_tray(shutdown_callback=agent._safe_shutdown)
     agent.run_main_loop()

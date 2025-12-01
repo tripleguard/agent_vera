@@ -68,8 +68,6 @@ project_hiddenimports = [
     'main.commands.user_commands',
     'main.commands.web_commands',
     'main.commands.window_manager',
-    'main.tray',
-    'pystray',
     'six',
     'web',
     'web.async_fetch',
@@ -98,7 +96,6 @@ project_datas = [
     # Ресурсы main
     ('main/system_prompt.txt', 'main'),
     ('main/lang_ru.py', 'main'),
-    ('main/paths.py', 'main'),
 ]
 
 # Модели будут скопированы отдельно (не в bundle) - см. build.bat
