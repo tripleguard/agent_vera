@@ -1,26 +1,30 @@
 import re
+import random
 import requests
 from bs4 import BeautifulSoup
 from typing import Optional, List
 from urllib.parse import urlparse, quote_plus, unquote
 
-# Единый User-Agent для всех HTTP-запросов проекта
-# Актуальный Chrome 120 на Windows 11
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
+# Пул User-Agent для ротации (минимизация блокировок)
+_USER_AGENTS = [
+    # Chrome Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    # Chrome Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    # Firefox Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    # Edge
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+]
 
-DEFAULT_HEADERS = {
-    "User-Agent": DEFAULT_USER_AGENT,
+# Базовые заголовки (User-Agent добавляется динамически)
+_BASE_HEADERS = {
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
     "Cache-Control": "no-cache",
-    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
     "Sec-Fetch-Site": "none",
@@ -28,36 +32,93 @@ DEFAULT_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
+# Для обратной совместимости
+DEFAULT_USER_AGENT = _USER_AGENTS[0]
+DEFAULT_HEADERS = {**_BASE_HEADERS, "User-Agent": DEFAULT_USER_AGENT}
+
 
 def get_default_headers() -> dict:
-    """Возвращает копию стандартных заголовков для HTTP-запросов."""
-    return DEFAULT_HEADERS.copy()
+    #Возвращает заголовки со случайным User-Agent.
+    headers = _BASE_HEADERS.copy()
+    headers["User-Agent"] = random.choice(_USER_AGENTS)
+    return headers
 
 
-def search_duckduckgo(query: str, max_results: int = 6) -> List[str]:
-    """Поиск ссылок через DuckDuckGo HTML. Общая функция для всех модулей."""
+def _search_brave(query: str, max_results: int = 6) -> List[str]:
+    #Поиск ссылок через Brave Search.
     links = []
     try:
         headers = get_default_headers()
-        url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+        # Brave Search использует стандартный HTML интерфейс
+        url = f"https://search.brave.com/search?q={quote_plus(query)}"
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
-            pattern = r'uddg=([^&"]+)'
-            matches = re.findall(pattern, resp.text)
+            soup = BeautifulSoup(resp.text, "html.parser")
             seen = set()
-            for m in matches:
-                try:
-                    decoded = unquote(m)
-                    if decoded.startswith("http") and decoded not in seen:
-                        links.append(decoded)
-                        seen.add(decoded)
+            # Brave возвращает результаты в div с классом snippet или a с data-type="web"
+            # Ищем ссылки в результатах поиска
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag.get("href", "")
+                # Фильтруем только внешние ссылки (не brave.com)
+                if href.startswith("http") and "brave.com" not in href and "search.brave" not in href:
+                    # Пропускаем служебные ссылки
+                    if any(skip in href for skip in ["favicon", "icon", "logo", "cdn.", "static."]):
+                        continue
+                    if href not in seen:
+                        links.append(href)
+                        seen.add(href)
                         if len(links) >= max_results:
                             break
-                except Exception:
-                    continue
     except Exception as e:
-        print(f"[SEARCH] DuckDuckGo error: {e}")
+        print(f"[SEARCH] Brave error: {e}")
     return links
+
+
+def _search_ddg_lite(query: str, max_results: int = 6) -> List[str]:
+    #Поиск ссылок через DuckDuckGo Lite (fallback).
+    links = []
+    try:
+        headers = get_default_headers()
+        url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            seen = set()
+            # DDG Lite: ссылки в формате //duckduckgo.com/l/?uddg=<encoded_url>
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag.get("href", "")
+                if "uddg=" in href:
+                    try:
+                        encoded_url = href.split("uddg=")[1].split("&")[0]
+                        decoded = unquote(encoded_url)
+                        if decoded.startswith("http") and decoded not in seen:
+                            links.append(decoded)
+                            seen.add(decoded)
+                            if len(links) >= max_results:
+                                break
+                    except Exception:
+                        continue
+    except Exception as e:
+        print(f"[SEARCH] DDG Lite error: {e}")
+    return links
+
+
+def search_duckduckgo(query: str, max_results: int = 6) -> List[str]:
+    # Пробуем Brave Search
+    links = _search_brave(query, max_results)
+    if links:
+        print(f"[SEARCH] Brave: найдено {len(links)} ссылок")
+        return links
+    
+    # Fallback на DuckDuckGo Lite
+    print("[SEARCH] Brave не дал результатов, пробуем DDG Lite...")
+    links = _search_ddg_lite(query, max_results)
+    if links:
+        print(f"[SEARCH] DDG Lite: найдено {len(links)} ссылок")
+        return links
+    
+    print("[SEARCH] Ни один поисковик не вернул результаты")
+    return []
 
 
 def extract_visible_text(html: str) -> str:

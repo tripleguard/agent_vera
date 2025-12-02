@@ -1,103 +1,105 @@
-import asyncio
-import aiohttp
+import time
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple
+from threading import Lock
 
 from web.web_utils import DEFAULT_HEADERS, extract_visible_text
 
 
-async def fetch_url_async(
+def _fetch_single_url(
     url: str,
-    session: aiohttp.ClientSession,
     timeout: float = 3.0,
     max_bytes: int = 70000
 ) -> Tuple[str, str]:
-
     try:
-        async with session.get(
+        headers = DEFAULT_HEADERS.copy()
+        resp = requests.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            headers=DEFAULT_HEADERS
-        ) as response:
-            # Читаем контент с ограничением размера
-            content = await response.read()
-            
-            if len(content) > max_bytes:
-                content = content[:max_bytes]
-            
-            # Используем парсер с удалением инфобоксов
-            text = extract_visible_text(content.decode('utf-8', errors='ignore'))[:1500]
-            return url, text
-            
-    except asyncio.TimeoutError:
-        # Таймаут - возвращаем пустой результат
-        return url, ""
+            headers=headers,
+            timeout=timeout,
+            stream=True,
+            allow_redirects=True
+        )
+        resp.raise_for_status()
+        
+        # Проверяем Content-Type
+        ct = (resp.headers.get("Content-Type") or "").lower()
+        if "text/html" not in ct and "application/xhtml" not in ct:
+            return url, ""
+        
+        # Читаем контент с ограничением размера
+        buf = bytearray()
+        for chunk in resp.iter_content(chunk_size=4096):
+            if not chunk:
+                continue
+            buf.extend(chunk)
+            if len(buf) >= max_bytes:
+                break
+        
+        # Декодируем
+        enc = resp.encoding or "utf-8"
+        try:
+            html = buf.decode(enc, errors="ignore")
+        except Exception:
+            html = buf.decode("utf-8", errors="ignore")
+        
+        # Парсим текст
+        text = extract_visible_text(html)[:1500]
+        return url, text
+        
     except Exception:
-        # Любая другая ошибка - возвращаем пустой результат
         return url, ""
 
 
-async def fetch_urls_async(
+def fetch_urls_sync(
     urls: List[str],
-    max_sources: int,
-    timeout: float,
-    early_stop_min: int,
-    early_stop_timeout: float
+    max_sources: int = 3,
+    timeout: float = 3.0,
+    early_stop_min: int = 3,
+    early_stop_timeout: float = 5.0
 ) -> List[Tuple[str, str]]:
-
-    results = []
-    start_time = asyncio.get_event_loop().time()
+    results: List[Tuple[str, str]] = []
+    results_lock = Lock()
+    start_time = time.time()
     
-    async with aiohttp.ClientSession() as session:
-        # Создаем Task объекты (не coroutines) чтобы можно было их отменять
-        tasks = [asyncio.create_task(fetch_url_async(url, session, timeout)) for url in urls]
+    # Используем ThreadPoolExecutor для параллельных запросов
+    max_workers = min(len(urls), 10)  # Не больше 10 потоков
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Запускаем все задачи
+        future_to_url = {
+            executor.submit(_fetch_single_url, url, timeout): url 
+            for url in urls
+        }
         
         # Обрабатываем по мере завершения
-        for coro in asyncio.as_completed(tasks):
-            url, text = await coro
-            
-            # Добавляем только непустые результаты
-            if text:
-                results.append((url, text))
+        for future in as_completed(future_to_url):
+            try:
+                url, text = future.result()
                 
-                elapsed = asyncio.get_event_loop().time() - start_time
-                
-                # Early stop условия
-                if len(results) >= max_sources:
-                    print(f"[ASYNC_FETCH] Достигнут максимум: {max_sources} источников")
-                    # Отменяем оставшиеся задачи
-                    for task in tasks:
-                        if not task.done():
-                            task.cancel()
-                    break
-                
-                if len(results) >= early_stop_min and elapsed >= early_stop_timeout:
-                    print(f"[ASYNC_FETCH] Early stop: {len(results)} источников за {elapsed:.1f}с")
-                    # Отменяем оставшиеся задачи
-                    for task in tasks:
-                        if not task.done():
-                            task.cancel()
-                    break
-        
-        # Ждем завершения всех задач (включая отмененные)
-        await asyncio.gather(*tasks, return_exceptions=True)
+                if text:
+                    with results_lock:
+                        results.append((url, text))
+                        current_count = len(results)
+                    
+                    elapsed = time.time() - start_time
+                    
+                    # Early stop условия
+                    if current_count >= max_sources:
+                        print(f"[FETCH] Достигнут максимум: {max_sources} источников")
+                        # Отменяем оставшиеся задачи
+                        for f in future_to_url:
+                            f.cancel()
+                        break
+                    
+                    if current_count >= early_stop_min and elapsed >= early_stop_timeout:
+                        print(f"[FETCH] Early stop: {current_count} источников за {elapsed:.1f}с")
+                        for f in future_to_url:
+                            f.cancel()
+                        break
+                        
+            except Exception:
+                continue
     
     return results
-
-
-def fetch_urls_sync(urls: List[str], **kwargs) -> List[Tuple[str, str]]:
-    try:
-        # Проверяем, есть ли уже запущенный loop (например, в Jupyter)
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    
-    if loop is not None:
-        # Если loop уже запущен, создаём новый в отдельном потоке
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, fetch_urls_async(urls, **kwargs))
-            return future.result()
-    else:
-        # Стандартный случай — используем asyncio.run(), который корректно
-        # создаёт и закрывает event loop
-        return asyncio.run(fetch_urls_async(urls, **kwargs))
