@@ -1,17 +1,42 @@
 import re
 from typing import List, Tuple
+from main.lang_ru import NUM_WORDS
+
+
+def _is_math_expression(text: str) -> bool:
+    """Проверяет, является ли текст математическим выражением."""
+    # Паттерн для чисел (цифры или словесные числительные)
+    num_words_pattern = "|".join(re.escape(w) for w in NUM_WORDS.keys())
+    number_pattern = rf"(?:\d+|(?:{num_words_pattern})(?:\s+(?:{num_words_pattern}))?)"
+    
+    # Математические операторы
+    operators = r"(?:плюс|минус|умножить(?:\s+на)?|разделить(?:\s+на)?|делить(?:\s+на)?|на)"
+    
+    # Полный паттерн: число оператор число
+    math_pattern = rf"{number_pattern}\s+{operators}\s+{number_pattern}"
+    
+    return bool(re.search(math_pattern, text.lower()))
 
 
 def parse_multitask(text: str) -> List[str]:
     text = re.sub(r"^\s*Вера[,\s]+", "", text.lower().strip(), flags=re.IGNORECASE)
     
+    # Если это математическое выражение, не разбиваем по "плюс"
+    is_math = _is_math_expression(text)
+    
     separators = [
         r"\s+и\s+",           
         r"\s+а\s+также\s+",   
-        r"\s+плюс\s+",   
+    ]
+    
+    # Добавляем "плюс" как разделитель только если это НЕ математика
+    if not is_math:
+        separators.append(r"\s+плюс\s+")
+    
+    separators.extend([
         r"\s+ещё\s+",         
         r"\s+потом\s+",       
-    ]
+    ])
     
     separator_pattern = "|".join(f"({p})" for p in separators)
     

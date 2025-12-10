@@ -22,10 +22,14 @@ from web.currency import execute_currency_command
 from .lang_ru import convert_years_in_text
 from .multitask import execute_multitask
 from .commands import HANDLERS, set_speak_callback, set_last_search_urls_ref, execute_user_name_command, stop_timer_ring, is_timer_ringing
+from .commands import start_app_scheduler, set_scheduled_speak_callback, set_open_app_callback, set_close_app_callback
+from .commands import set_reminder_shutdown_event, set_app_scheduler_shutdown_event
 from .commands.time_commands import start_scheduler
+from .commands.app_control import open_app_by_name, close_app_by_name
 from user.tasks import TaskManager, execute_task_command
 from user.user_profile import UserProfile, execute_profile_command
 from user.history_logger import HistoryLogger, execute_history_command
+from .tools import TOOLS
 
 def _enable_windows_ansi():
     try:
@@ -53,7 +57,9 @@ _ANSI_COLORS = {
 
 _current_color = "reset"
 _mic_muted = False
-_shutdown_requested = False  # Флаг для корректного завершения
+_mic_muted_lock = threading.Lock()  # Lock для thread-safe доступа к _mic_muted
+_shutdown_event = threading.Event()  # Event для graceful shutdown
+_shutdown_requested = False  # Флаг для корректного завершения (legacy)
 
 def set_console_color(name: str) -> bool:
     global _current_color
@@ -69,7 +75,7 @@ def set_console_color(name: str) -> bool:
     except Exception:
         return False
 
-def _print_banner_and_tips():
+def _print_banner_and_tips(activation_word: str):
     banner = (
         "\n"
         "\033[96m __     _______ ____      _    \033[94m\n"
@@ -81,7 +87,7 @@ def _print_banner_and_tips():
         "\033[96mVoice-Enabled Responsive Agent\033[0m\n"
     )
     print(banner)
-    print("1. Для запуска агента скажите активационное слово \"Вера\".")
+    print(f"1. Для запуска агента скажите активационное слово \"{activation_word}\".")
     print("2. /help для информации по командам")
     print("3. /color <цвет> для изменения цвета (например: /color green)")
 
@@ -90,8 +96,9 @@ def _safe_shutdown():
     global _shutdown_requested
     print("Завершение работы агента...")
     
-    # Устанавливаем флаг завершения для остановки главного цикла
+    # Устанавливаем флаг и event завершения для остановки всех циклов
     _shutdown_requested = True
+    _shutdown_event.set()  # Сигнал всем scheduler'ам
     
     # Очищаем очередь TTS и останавливаем поток
     try:
@@ -104,25 +111,30 @@ def _safe_shutdown():
     # Даем время на завершение потока TTS
     time.sleep(0.5)
     
-    # Сохраняем все данные пользователя
+    # Сохраняем все данные пользователя (безопасный доступ через globals)
     print("Сохранение данных...")
-    try:
-        task_manager._save()
-        print("[SAVE] Задачи сохранены")
-    except Exception as e:
-        print(f"[SAVE] Ошибка сохранения задач: {e}")
+    g = globals()
     
-    try:
-        user_profile._save()
-        print("[SAVE] Профиль сохранен")
-    except Exception as e:
-        print(f"[SAVE] Ошибка сохранения профиля: {e}")
+    if 'task_manager' in g:
+        try:
+            g['task_manager']._save()
+            print("[SAVE] Задачи сохранены")
+        except Exception as e:
+            print(f"[SAVE] Ошибка сохранения задач: {e}")
     
-    try:
-        history_logger._save()
-        print("[SAVE] История сохранена")
-    except Exception as e:
-        print(f"[SAVE] Ошибка сохранения истории: {e}")
+    if 'user_profile' in g:
+        try:
+            g['user_profile']._save()
+            print("[SAVE] Профиль сохранен")
+        except Exception as e:
+            print(f"[SAVE] Ошибка сохранения профиля: {e}")
+    
+    if 'history_logger' in g:
+        try:
+            g['history_logger']._save()
+            print("[SAVE] История сохранена")
+        except Exception as e:
+            print(f"[SAVE] Ошибка сохранения истории: {e}")
     
     print("Данные сохранены. До свидания!")
     # Не вызываем sys.exit() сразу - даем главному циклу завершиться
@@ -166,11 +178,13 @@ def _stdin_listener():
                               ", ".join(sorted(_ANSI_COLORS.keys())))
                     continue
                 if line == "/mute":
-                    _mic_muted = True
+                    with _mic_muted_lock:
+                        _mic_muted = True
                     print("[MIC] Микрофон выключен.")
                     continue
                 if line == "/unmute":
-                    _mic_muted = False
+                    with _mic_muted_lock:
+                        _mic_muted = False
                     print("[MIC] Микрофон включен.")
                     continue
                 if line == "/exit":
@@ -218,7 +232,7 @@ def _flush_stdin_buffer():
 _enable_windows_ansi()
 
 # Использование ConfigManager для централизованного доступа к конфигурации
-from main.config_manager import get_config
+from main.config_manager import get_config, get_data_dir
 
 try:
     config = get_config()
@@ -259,7 +273,7 @@ except Exception as e:
     print(f"[ERROR] Не удалось загрузить модель: {e}")
     sys.exit(1)
 
-_print_banner_and_tips()
+_print_banner_and_tips(cfg["activation_word"])
 
 # Простая краткосрочная память диалога (в пределах процесса)
 # Используем deque для автоматического управления размером
@@ -298,9 +312,9 @@ def _tts_worker():
             # Непрерывный цикл обработки без повторного запуска run loop
             engine.startLoop(False)
             while True:
-                # Обрабатываем команды из очереди
+                # Обрабатываем команды из очереди (блокируем с таймаутом вместо busy-wait)
                 try:
-                    cmd = _tts_queue.get_nowait()
+                    cmd = _tts_queue.get(timeout=0.05)
                 except queue.Empty:
                     cmd = None
 
@@ -327,7 +341,6 @@ def _tts_worker():
                     engine.iterate()
                 except Exception as e:
                     print(f"[TTS] Ошибка в цикле: {e}")
-                time.sleep(0.01)
         except Exception as e:
             retry_count += 1
             print(f"[TTS] Критическая ошибка TTS потока (попытка {retry_count}/{max_retries}): {e}")
@@ -396,8 +409,9 @@ q = queue.Queue()
 def audio_callback(indata, frames, time_, status):
     if status:
         print(status, file=sys.stderr)
-    if _mic_muted:
-        return
+    with _mic_muted_lock:
+        if _mic_muted:
+            return
     q.put(bytes(indata))
 
 # Настройки веб-поиска
@@ -405,14 +419,18 @@ _WEB_CFG = cfg["web_search"]
 LAST_SEARCH_URLS: list[str] = []
 set_speak_callback(speak)
 set_last_search_urls_ref(LAST_SEARCH_URLS)
+set_reminder_shutdown_event(_shutdown_event)  # Передаём event для graceful shutdown
 start_scheduler()
 
+# Инициализация планировщика запуска/закрытия приложений
+set_scheduled_speak_callback(speak)
+set_open_app_callback(open_app_by_name)
+set_close_app_callback(close_app_by_name)
+set_app_scheduler_shutdown_event(_shutdown_event)  # Передаём event для graceful shutdown
+start_app_scheduler()
+
 # Инициализация новых модулей
-# В frozen bundle data должна быть рядом с exe, не в _MEIPASS
-if getattr(sys, 'frozen', False):
-    DATA_DIR = Path(os.path.dirname(sys.executable)) / "data"
-else:
-    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = get_data_dir()
 DATA_DIR.mkdir(exist_ok=True)
 
 task_manager = TaskManager(DATA_DIR / "tasks.json")
@@ -602,17 +620,50 @@ def ask_llm(user_text: str) -> str:
 
     # Обработка вызова инструмента от модели
     tool = _parse_tool_call(assistant_reply)
-    if tool and tool.get("name") == "web_search":
-        try:
-            args = tool.get("arguments") or {}
-            query = str(args.get("query") or user_text).strip()
-            if not query:
-                return "Что искать? Уточните запрос."
-            # print(f"[TOOL_CALL] Веб-поиск: {query}")
-            return web_search_answer(query, _WEB_CFG, SYSTEM_PROMPT, llm, LAST_SEARCH_URLS)
-        except Exception as e:
-            print(f"[WEB_SEARCH] Ошибка выполнения инструмента: {e}")
-            return "Не удалось выполнить веб-поиск сейчас. Попробуйте позже."
+    if tool:
+        tool_name = tool.get("name", "")
+        args = tool.get("arguments") or {}
+        
+        # web_search — встроенный инструмент
+        if tool_name == "web_search":
+            try:
+                query = str(args.get("query") or user_text).strip()
+                if not query:
+                    return "Что искать? Уточните запрос."
+                return web_search_answer(query, _WEB_CFG, SYSTEM_PROMPT, llm, LAST_SEARCH_URLS)
+            except Exception as e:
+                print(f"[WEB_SEARCH] Ошибка: {e}")
+                return "Не удалось выполнить веб-поиск сейчас."
+        
+        # Проверяем плагины из TOOLS
+        if tool_name in TOOLS:
+            try:
+                print(f"[TOOL_CALL] {tool_name}: {args}")
+                tool_result = TOOLS[tool_name](args)
+                
+                # Передаём результат модели для анализа/пересказа
+                if tool_result and len(tool_result) > 100:
+                    # Просим модель кратко пересказать
+                    summary_messages = [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_text},
+                        {"role": "assistant", "content": f"Я прочитала документ. Вот его содержимое:\n\n{tool_result}"},
+                        {"role": "user", "content": "Кратко перескажи основное содержание."}
+                    ]
+                    try:
+                        result = llm.create_chat_completion(messages=summary_messages, **gen_args)
+                        summary = result["choices"][0]["message"]["content"].strip()
+                        summary = re.sub(r"<think>.*?</think>", "", summary, flags=re.DOTALL).strip()
+                        return summary
+                    except Exception as e:
+                        print(f"[TOOL] Ошибка суммаризации: {e}")
+                        # Возвращаем сырой результат, обрезанный
+                        return tool_result[:2000] + "..." if len(tool_result) > 2000 else tool_result
+                
+                return tool_result
+            except Exception as e:
+                print(f"[TOOL] Ошибка выполнения {tool_name}: {e}")
+                return f"Ошибка выполнения {tool_name}: {e}"
 
     # Очищаем tool call теги из ответа, если они остались (модель вернула их, но они не обработались)
     assistant_reply = re.sub(r"<\|tool_call\|>.*?</\|tool_call\|>", "", assistant_reply, flags=re.DOTALL).strip()

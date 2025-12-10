@@ -1,7 +1,3 @@
-"""
-Поиск файлов через Windows Search API.
-Использует встроенный индекс Windows (как поиск в Пуске).
-"""
 import urllib.parse
 from typing import Dict, List
 
@@ -11,7 +7,7 @@ try:
 except ImportError:
     HAS_WIN32 = False
 
-from main.commands.app_control import _ru_to_en
+from main.lang_ru import ru_to_en as _ru_to_en
 
 
 def _build_search_variants(query: str) -> List[str]:
@@ -109,13 +105,6 @@ def search_windows_index_folders(query: str, max_results: int = 30) -> List[Dict
 
 
 def smart_search(query: str, max_results: int = 50, search_folders: bool = False) -> List[Dict]:
-    """Универсальный поиск — обёртка для совместимости."""
     if search_folders:
         return search_windows_index_folders(query, max_results)
     return search_windows_index(query, max_results, file_only=True)
-
-
-def get_indexed_directories() -> List[str]:
-    """Возвращает список индексируемых директорий (заглушка для совместимости)."""
-    # Windows Search индексирует автоматически, возвращаем пустой список
-    return []

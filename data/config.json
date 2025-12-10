@@ -26,7 +26,8 @@
   "sites": {
     "ютуб": "https://www.youtube.com/",
     "хабр": "https://habr.com/ru/",
-    "вк": "https://vk.com/"
+    "вк": "https://vk.com/",
+    "рутуб": "http://rutube.ru"
   },
   "web_search": {
     "temperature": 0,

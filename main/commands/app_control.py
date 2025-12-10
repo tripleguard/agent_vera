@@ -1,7 +1,6 @@
 import os
 import re
 import subprocess
-import difflib
 import ctypes
 from pathlib import Path
 from typing import Optional
@@ -9,6 +8,8 @@ import psutil
 
 from main.config_manager import get_config
 from main.app_indexer import load_app_index, build_app_index
+from main.lang_ru import ru_to_en
+from main.utils.fuzzy import fuzzy_match
 
 # Загрузка индекса приложений (автоматически обновляется если устарел)
 try:
@@ -96,19 +97,10 @@ def execute_predefined_command(text: str) -> Optional[str]:
     return None
 
 
-def _ru_to_en(s: str) -> str:
-    table = {
-        'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z',
-        'и':'i','й':'i','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
-        'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh',
-        'щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'
-    }
-    return "".join(table.get(ch, ch) for ch in s)
-
-
 def _best_app_match(query: str) -> Optional[dict]:
+    """ Нечёткий поиск приложения с учётом транслитерации."""
     q = re.sub(r"[^a-zа-я0-9]+", "", query.lower())
-    q_en = _ru_to_en(q)
+    q_en = ru_to_en(q)
     best_item, best_score = None, 0.0
     
     for item in APP_INDEX:
@@ -119,11 +111,13 @@ def _best_app_match(query: str) -> Optional[dict]:
                 continue
             
             c_norm = re.sub(r"[^a-zа-я0-9]+", "", cand)
+            # Используем fuzzy_match для обоих вариантов (оригинал + транслит)
             score = max(
-                difflib.SequenceMatcher(None, q, c_norm).ratio(),
-                difflib.SequenceMatcher(None, q_en, c_norm).ratio()
+                fuzzy_match(q, c_norm, boost_substring=False),
+                fuzzy_match(q_en, c_norm, boost_substring=False)
             )
             
+            # Дополнительный бонус за вхождение подстроки
             if (q in c_norm) or (q_en in c_norm):
                 score += 0.2
             
@@ -142,6 +136,11 @@ def execute_app_command(text: str) -> Optional[str]:
     if re.search(r"\bкомпьютер\b", lowered):
         return None
     
+    # Быстрые команды для командной строки (cmd)
+    if re.search(r"\b(открой|запусти)\b.*\b(cmd|командн\w*\s*строк\w*|ком\s*строк\w*|консол[ьи]|терминал)\b", lowered):
+        os.startfile("cmd.exe")
+        return "Открываю командную строку."
+    
     # Определение действия
     if re.search(r"\b(закрой|выключи)\b", lowered):
         action = "close"
@@ -155,9 +154,13 @@ def execute_app_command(text: str) -> Optional[str]:
     if not m or re.search(r"\bисточник\w*\b", m.group(1)):
         return None
     
-    cand = _best_app_match(m.group(1))
+    target_name = m.group(1)
+    cand = _best_app_match(target_name)
+    
     if not cand:
         return None
+    
+    print(f"[OPEN_APP] Найдено: {cand.get('display_name')}")
     
     if action == "open":
         return _open_app(cand)
@@ -227,6 +230,17 @@ def _close_app(app: dict) -> str:
     return "Закрываю приложение." if any_killed else "Приложение не найдено среди процессов."
 
 
+def close_app_by_name(name: str) -> str:
+    """Закрывает приложение по имени (для scheduled_apps)."""
+    app = _best_app_match(name)
+    if not app:
+        # Пробуем закрыть напрямую по имени
+        if kill_process(name):
+            return f"Закрываю {name}."
+        return f"Приложение '{name}' не найдено."
+    return _close_app(app)
+
+
 def execute_browser_command(text: str) -> Optional[str]:
     """Открывает браузер по умолчанию."""
     lowered = text.lower().strip()
@@ -292,3 +306,11 @@ def execute_coin_flip_command(text: str) -> Optional[str]:
     import random
     result = random.choice(['орёл', 'решка'])
     return f"{'Выпал' if result == 'орёл' else 'Выпала'} {result}"
+
+
+def open_app_by_name(app_name: str) -> Optional[str]:
+    """Запускает приложение по имени (для scheduled_apps)."""
+    app = _best_app_match(app_name)
+    if app:
+        return _open_app(app)
+    return None

@@ -1,6 +1,4 @@
 import re
-import sys
-import os
 import time
 import datetime
 import threading
@@ -9,19 +7,12 @@ from pathlib import Path
 from typing import Optional, Callable
 from dataclasses import dataclass, asdict
 from main.lang_ru import TIME_UNITS, replace_number_words
+from main.config_manager import get_data_dir
 from user.json_storage import load_json, save_json
 
 
-def _get_reminders_path() -> Path:
-    """Возвращает путь к reminders.json - рядом с exe в frozen bundle."""
-    if getattr(sys, 'frozen', False):
-        return Path(os.path.dirname(sys.executable)) / "data" / "reminders.json"
-    else:
-        return Path(__file__).resolve().parent.parent.parent / "data" / "reminders.json"
-
-
 # Путь к файлу напоминаний
-_REMINDERS_FILE = _get_reminders_path()
+_REMINDERS_FILE = get_data_dir() / "reminders.json"
 
 # Импорт модуля уведомлений
 try:
@@ -31,17 +22,41 @@ except ImportError:
     _NOTIFICATIONS_ENABLED = False
 
 
+# Формат времени для хранения в JSON (человекочитаемый)
+_TIME_FORMAT = "%Y-%m-%d-%H-%M"
+
+
 @dataclass
 class _Reminder:
-    ts: float
+    ts: str  # Время в формате "2025-12-02-19-57"
     message: str
     is_timer: bool = False  # True для таймеров, False для напоминаний
+    
+    @property
+    def timestamp(self) -> float:
+        """Возвращает unix timestamp для сравнения."""
+        try:
+            return datetime.datetime.strptime(self.ts, _TIME_FORMAT).timestamp()
+        except Exception:
+            return 0.0
+    
+    @staticmethod
+    def from_timestamp(ts: float) -> str:
+        """Конвертирует unix timestamp в строковый формат."""
+        return datetime.datetime.fromtimestamp(ts).strftime(_TIME_FORMAT)
 
 
 _scheduled: list[_Reminder] = []
 _scheduler_started = False
 _SPEAK_CB: Optional[Callable] = None
 _timer_ringing = False
+_shutdown_event: Optional[threading.Event] = None  # Event для graceful shutdown
+
+
+def set_shutdown_event(event: threading.Event) -> None:
+    """Устанавливает event для graceful shutdown."""
+    global _shutdown_event
+    _shutdown_event = event
 
 
 def set_speak_callback(cb: Callable) -> None:
@@ -88,12 +103,26 @@ def _load_reminders() -> None:
     if not data:
         return
     now = time.time()
-    # Загружаем только будущие напоминания (с поддержкой is_timer)
-    _scheduled = [
-        _Reminder(ts=r["ts"], message=r["message"], is_timer=r.get("is_timer", False))
-        for r in data if r["ts"] > now
-    ]
-    # Сохраняем обновлённый список (без просроченных)
+    loaded = []
+    for r in data:
+        ts_val = r.get("ts")
+        # Поддержка старого формата (float) и нового (string)
+        if isinstance(ts_val, (int, float)):
+            # Старый формат - конвертируем
+            ts_str = _Reminder.from_timestamp(ts_val)
+            ts_float = ts_val
+        else:
+            ts_str = ts_val
+            try:
+                ts_float = datetime.datetime.strptime(ts_str, _TIME_FORMAT).timestamp()
+            except Exception:
+                continue
+        
+        if ts_float > now:
+            loaded.append(_Reminder(ts=ts_str, message=r["message"], is_timer=r.get("is_timer", False)))
+    
+    _scheduled = loaded
+    # Сохраняем обновлённый список (без просроченных, в новом формате)
     if len(_scheduled) != len(data):
         _save_reminders()
     print(f"[REMINDER] Загружено {len(_scheduled)} напоминаний")
@@ -101,10 +130,10 @@ def _load_reminders() -> None:
 
 def _scheduler():
     """Фоновый планировщик напоминаний и таймеров."""
-    while True:
+    while not (_shutdown_event and _shutdown_event.is_set()):
         now = time.time()
         for task in _scheduled[:]:
-            if now >= task.ts:
+            if now >= task.timestamp:
                 print(f"[{'ТАЙМЕР' if task.is_timer else 'REMINDER'}] {task.message}")
                 
                 if task.is_timer:
@@ -124,7 +153,13 @@ def _scheduler():
                 
                 _scheduled.remove(task)
                 _save_reminders()
-        time.sleep(1)
+        
+        # Используем wait вместо sleep для быстрого реагирования на shutdown
+        if _shutdown_event:
+            _shutdown_event.wait(timeout=1)
+        else:
+            time.sleep(1)
+    print("[REMINDER] Scheduler остановлен")
 
 
 def start_scheduler() -> None:
@@ -213,7 +248,7 @@ def execute_reminder_command(text: str) -> Optional[str]:
         removed = 0
         for task in list(_scheduled):
             try:
-                if datetime.datetime.fromtimestamp(task.ts).strftime("%H:%M") == target_str:
+                if datetime.datetime.strptime(task.ts, _TIME_FORMAT).strftime("%H:%M") == target_str:
                     _scheduled.remove(task)
                     removed += 1
             except Exception:
@@ -261,7 +296,8 @@ def execute_reminder_command(text: str) -> Optional[str]:
         n, unit = int(m.group(1)), m.group(2)
         if unit in TIME_UNITS:
             sec = n * TIME_UNITS[unit]
-            _scheduled.append(_Reminder(time.time() + sec, f"Таймер {n} {unit} завершён.", is_timer=True))
+            ts_str = _Reminder.from_timestamp(time.time() + sec)
+            _scheduled.append(_Reminder(ts_str, f"Таймер {n} {unit} завершён.", is_timer=True))
             _save_reminders()
             return f"Таймер на {n} {unit} установлен."
     
@@ -270,7 +306,8 @@ def execute_reminder_command(text: str) -> Optional[str]:
         unit = m.group(1)
         if unit in TIME_UNITS:
             sec = TIME_UNITS[unit]
-            _scheduled.append(_Reminder(time.time() + sec, f"Таймер 1 {unit} завершён.", is_timer=True))
+            ts_str = _Reminder.from_timestamp(time.time() + sec)
+            _scheduled.append(_Reminder(ts_str, f"Таймер 1 {unit} завершён.", is_timer=True))
             _save_reminders()
             return f"Таймер на 1 {unit} установлен."
     
@@ -280,8 +317,9 @@ def execute_reminder_command(text: str) -> Optional[str]:
         if unit in TIME_UNITS:
             sec = n * TIME_UNITS[unit]
             target_ts = time.time() + sec
+            ts_str = _Reminder.from_timestamp(target_ts)
             target_time = datetime.datetime.fromtimestamp(target_ts).strftime('%H:%M')
-            _scheduled.append(_Reminder(target_ts, message))
+            _scheduled.append(_Reminder(ts_str, message))
             _save_reminders()
             return f"Напоминание на {target_time} установлено."
     
@@ -291,8 +329,9 @@ def execute_reminder_command(text: str) -> Optional[str]:
         if unit in TIME_UNITS:
             sec = TIME_UNITS[unit]
             target_ts = time.time() + sec
+            ts_str = _Reminder.from_timestamp(target_ts)
             target_time = datetime.datetime.fromtimestamp(target_ts).strftime('%H:%M')
-            _scheduled.append(_Reminder(target_ts, message))
+            _scheduled.append(_Reminder(ts_str, message))
             _save_reminders()
             return f"Напоминание на {target_time} установлено."
     
@@ -303,8 +342,9 @@ def execute_reminder_command(text: str) -> Optional[str]:
             message = m.group(2).strip()
             sec = TIME_UNITS[unit]
             target_ts = time.time() + sec
+            ts_str = _Reminder.from_timestamp(target_ts)
             target_time = datetime.datetime.fromtimestamp(target_ts).strftime('%H:%M')
-            _scheduled.append(_Reminder(target_ts, message))
+            _scheduled.append(_Reminder(ts_str, message))
             _save_reminders()
             return f"Напоминание на {target_time} установлено."
     
@@ -313,8 +353,9 @@ def execute_reminder_command(text: str) -> Optional[str]:
         n, unit, message = int(m.group(1)), m.group(2), m.group(3).strip()
         sec = n * TIME_UNITS.get(unit, 60)
         target_ts = time.time() + sec
+        ts_str = _Reminder.from_timestamp(target_ts)
         target_time = datetime.datetime.fromtimestamp(target_ts).strftime('%H:%M')
-        _scheduled.append(_Reminder(target_ts, message))
+        _scheduled.append(_Reminder(ts_str, message))
         _save_reminders()
         return f"Напоминание на {target_time} установлено."
     
@@ -329,7 +370,8 @@ def execute_reminder_command(text: str) -> Optional[str]:
         if target <= now_dt:
             target += datetime.timedelta(days=1)
         
-        _scheduled.append(_Reminder(target.timestamp(), message))
+        ts_str = target.strftime(_TIME_FORMAT)
+        _scheduled.append(_Reminder(ts_str, message))
         _save_reminders()
         return f"Напоминание на {target.strftime('%H:%M')} установлено."
     
@@ -347,11 +389,14 @@ def execute_list_reminders_command(text: str) -> Optional[str]:
         return "Активных напоминаний нет."
     
     # Сортируем по времени
-    sorted_tasks = sorted(_scheduled, key=lambda r: r.ts)
+    sorted_tasks = sorted(_scheduled, key=lambda r: r.timestamp)
     
     lines = [f"Активных напоминаний: {len(sorted_tasks)}"]
     for i, task in enumerate(sorted_tasks, 1):
-        dt = datetime.datetime.fromtimestamp(task.ts)
+        try:
+            dt = datetime.datetime.strptime(task.ts, _TIME_FORMAT)
+        except Exception:
+            dt = datetime.datetime.now()
         time_str = dt.strftime('%H:%M')
         # Если не сегодня, добавляем дату
         if dt.date() != datetime.datetime.now().date():

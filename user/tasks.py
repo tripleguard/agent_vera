@@ -1,24 +1,47 @@
 import re
 import subprocess
-import time
+import datetime
 from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass, asdict
 from user.json_storage import load_json, save_json
 
+# Формат времени для хранения в JSON (человекочитаемый)
+_TIME_FORMAT = "%Y-%m-%d-%H-%M"
+
+
+def _ts_to_str(ts: float) -> str:
+    """Конвертирует unix timestamp в строковый формат."""
+    return datetime.datetime.fromtimestamp(ts).strftime(_TIME_FORMAT)
+
+
+def _now_str() -> str:
+    """Возвращает текущее время в строковом формате."""
+    return datetime.datetime.now().strftime(_TIME_FORMAT)
+
+
 @dataclass
 class Task:
     id: int
     text: str
-    created_at: float
+    created_at: str  # Формат "2025-12-02-19-57"
     completed: bool = False
-    completed_at: Optional[float] = None
+    completed_at: Optional[str] = None
     
     def to_dict(self) -> dict:
         return asdict(self)
     
     @classmethod
     def from_dict(cls, data: dict) -> 'Task':
+        # Поддержка старого формата (float)
+        created = data.get('created_at')
+        if isinstance(created, (int, float)):
+            data['created_at'] = _ts_to_str(created)
+        
+        completed = data.get('completed_at')
+        if isinstance(completed, (int, float)):
+            data['completed_at'] = _ts_to_str(completed)
+        
         return cls(**data)
 
 
@@ -41,7 +64,7 @@ class TaskManager:
         task = Task(
             id=task_id,
             text=text.strip(),
-            created_at=time.time()
+            created_at=_now_str()
         )
         self.tasks.append(task)
         self._save()
@@ -53,7 +76,7 @@ class TaskManager:
         for task in self.tasks:
             if not task.completed and text_lower in task.text.lower():
                 task.completed = True
-                task.completed_at = time.time()
+                task.completed_at = _now_str()
                 self._save()
                 return task
         
@@ -63,7 +86,7 @@ class TaskManager:
         for task in self.tasks:
             if task.id == task_id and not task.completed:
                 task.completed = True
-                task.completed_at = time.time()
+                task.completed_at = _now_str()
                 self._save()
                 return task
         return None
@@ -134,7 +157,7 @@ def execute_task_command(text: str, task_manager: TaskManager) -> Optional[str]:
             if 1 <= task_num <= len(pending):
                 task = pending[task_num - 1]
                 task.completed = True
-                task.completed_at = time.time()
+                task.completed_at = _now_str()
                 task_manager._save()
                 return f"Задача выполнена: {task.text}"
             return f"Нет задачи с номером {task_num}. Всего активных задач: {len(pending)}"

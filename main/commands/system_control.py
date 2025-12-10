@@ -1,7 +1,7 @@
 import re
 import os
 import subprocess
-import datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from main.lang_ru import replace_number_words
@@ -164,7 +164,7 @@ def execute_screenshot_command(text: str) -> Optional[str]:
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         
         # Имя файла с timestamp
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"screenshot_{timestamp}.png"
         filepath = screenshots_dir / filename
         
@@ -223,6 +223,65 @@ def execute_ip_command(text: str) -> Optional[str]:
     except Exception as e:
         print(f"[IP] Ошибка: {e}")
         return "Ошибка получения IP адреса."
+
+
+def execute_start_menu_command(text: str) -> Optional[str]:
+    """Открытие меню Пуск."""
+    lower = text.lower().strip()
+    
+    patterns = [
+        r"^пуск$",
+        r"\b(открой|открыть|покажи|запусти)\s+(меню\s+)?пуск\b",
+        r"\bменю\s+пуск\b",
+        r"\bстарт\s*меню\b",
+        r"\bвера\s+пуск\b",  # если ключевое слово не удалилось
+    ]
+    
+    if any(re.search(p, lower) for p in patterns):
+        try:
+            # Используем ctypes для эмуляции Win клавиши
+            import ctypes
+            user32 = ctypes.windll.user32
+            # VK_LWIN = 0x5B (Left Windows key)
+            user32.keybd_event(0x5B, 0, 0, 0)  # Key down
+            user32.keybd_event(0x5B, 0, 2, 0)  # Key up
+            return "Открываю меню Пуск."
+        except Exception as e:
+            print(f"[START_MENU] ctypes ошибка: {e}")
+            # Fallback через pyautogui
+            try:
+                import pyautogui
+                pyautogui.press('win')
+                return "Открываю меню Пуск."
+            except Exception:
+                pass
+            return "Не удалось открыть меню Пуск."
+    
+    return None
+
+
+def execute_explorer_command(text: str) -> Optional[str]:
+    """Открытие проводника / Мой компьютер / Этот компьютер."""
+    lower = text.lower().strip()
+    
+    patterns = [
+        r"\b(открой|открыть|покажи|запусти)\s+(мой\s+)?компьютер\b",
+        r"\b(открой|открыть|покажи|запусти)\s+этот\s+компьютер\b",
+        r"\b(открой|открыть|покажи|запусти)\s+проводник\b",
+        r"\bмой\s+компьютер\b",
+        r"\bэтот\s+компьютер\b",
+    ]
+    
+    if any(re.search(p, lower) for p in patterns):
+        try:
+            # Открываем "Этот компьютер" через shell:MyComputerFolder
+            subprocess.Popen(['explorer.exe', 'shell:MyComputerFolder'])
+            return "Открываю проводник."
+        except Exception as e:
+            print(f"[EXPLORER] Ошибка: {e}")
+            return "Не удалось открыть проводник."
+    
+    return None
 
 
 def execute_internet_speed_command(text: str) -> Optional[str]:

@@ -76,6 +76,10 @@ def _get_project_root() -> Path:
         return Path(__file__).resolve().parent.parent
 
 
+def get_data_dir() -> Path:
+    return _get_project_root() / "data"
+
+
 class ConfigManager:
     _instance: Optional['ConfigManager'] = None
     _config: Optional[dict] = None

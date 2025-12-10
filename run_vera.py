@@ -163,6 +163,46 @@ if __name__ == "__main__":
     # Создаем ярлык при первом запуске (только для exe)
     create_desktop_shortcut()
     
-    # Запускаем главный цикл агента
-    from main import agent
-    agent.run_main_loop()
+    # Запускаем главный цикл агента с автоперезапуском при ошибках
+    import traceback
+    
+    MAX_RESTART_ATTEMPTS = 5  # Максимум перезапусков подряд
+    RESTART_DELAY = 3  # Секунды между перезапусками
+    restart_count = 0
+    
+    while restart_count < MAX_RESTART_ATTEMPTS:
+        try:
+            from main import agent
+            agent.run_main_loop()
+            break  # Нормальное завершение - выходим из цикла
+        except KeyboardInterrupt:
+            print("\n[VERA] Завершение по запросу пользователя...")
+            break
+        except SystemExit as e:
+            # Нормальный выход через sys.exit()
+            if e.code == 0:
+                break
+            print(f"\n[VERA] Завершение с кодом: {e.code}")
+            break
+        except Exception as e:
+            restart_count += 1
+            print("\n" + "=" * 60)
+            print(f"[ОШИБКА] Произошла ошибка (попытка {restart_count}/{MAX_RESTART_ATTEMPTS}):")
+            print("-" * 60)
+            traceback.print_exc()
+            print("=" * 60)
+            
+            if restart_count < MAX_RESTART_ATTEMPTS:
+                print(f"\n[VERA] Автоматический перезапуск через {RESTART_DELAY} сек...")
+                print("[VERA] Нажмите Ctrl+C для выхода\n")
+                try:
+                    import time
+                    time.sleep(RESTART_DELAY)
+                except KeyboardInterrupt:
+                    print("\n[VERA] Выход по запросу пользователя")
+                    break
+            else:
+                print(f"\n[VERA] Достигнут лимит перезапусков ({MAX_RESTART_ATTEMPTS})")
+                print("[VERA] Проверьте логи ошибок выше и исправьте проблему")
+                input("\nНажмите Enter для выхода...")
+                break

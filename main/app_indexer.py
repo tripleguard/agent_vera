@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import sys
 import time
 import traceback
 from pathlib import Path
@@ -14,18 +13,10 @@ except Exception:
 
 import winreg
 
+from main.config_manager import get_data_dir
 
-def _get_app_index_path() -> Path:
-    """Возвращает путь к app_index.json - всегда рядом с exe или в папке проекта."""
-    if getattr(sys, 'frozen', False):
-        # PyInstaller bundle - создаём рядом с exe
-        return Path(os.path.dirname(sys.executable)) / "app_index.json"
-    else:
-        # Обычный запуск - в папке main
-        return Path(__file__).resolve().parent / "app_index.json"
-
-
-APP_INDEX_PATH = _get_app_index_path()
+# Путь к индексу приложений (теперь в data/)
+APP_INDEX_PATH = get_data_dir() / "app_index.json"
 
 START_MENU_DIRS = [
     Path(os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs")),

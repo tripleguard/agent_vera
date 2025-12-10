@@ -3,7 +3,7 @@ import random
 import requests
 from bs4 import BeautifulSoup
 from typing import Optional, List
-from urllib.parse import urlparse, quote_plus, unquote
+from urllib.parse import urlparse, quote_plus
 
 # Пул User-Agent для ротации (минимизация блокировок)
 _USER_AGENTS = [

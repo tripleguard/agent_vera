@@ -1,7 +1,3 @@
-"""
-Общие утилиты для работы с JSON-хранилищами.
-Используется в tasks.py, user_profile.py, history_logger.py, time_commands.py.
-"""
 import json
 from pathlib import Path
 from typing import Any, Optional

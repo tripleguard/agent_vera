@@ -8,6 +8,9 @@ import requests
 
 from web.web_utils import get_default_headers, fetch_url, search_duckduckgo
 
+_WEB_SUMMARY_PROMPT = """Ты — Вера, голосовая помощница. Тебе дан контекст из веб-поиска.
+Твоя задача — дать краткий, точный ответ на вопрос пользователя на основе контекста."""
+
 _SEARCH_CACHE: "OrderedDict[str, tuple[float, str, list[str]]]" = OrderedDict()
 _CACHE_LOCK = threading.Lock()
 
@@ -89,9 +92,6 @@ def execute_wikipedia_command(text: str) -> Optional[str]:
         # На любой ошибке возвращаем None — маршрутизация решит, как отвечать дальше
         return None
     return None
-
-# Минимальный промпт для суммаризации веб-контекста (не нагружает модель)
-_WEB_SUMMARY_PROMPT = "Ты — ассистент по анализу веб-контекста. Отвечай СТРОГО по контексту. Не выдумывай информацию. Даты указывай ТОЧНО как в контексте. Сейчас 2025 год."
 
 def web_search_answer(query: str, web_cfg: dict, system_prompt: str, llm, last_search_urls: list) -> str:
     headers = get_default_headers()

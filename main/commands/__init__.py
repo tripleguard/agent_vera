@@ -1,8 +1,3 @@
-"""
-Модульная структура команд для голосового агента «Вера».
-Каждый модуль содержит логически связанные команды.
-"""
-
 from .app_control import (
     execute_predefined_command,
     execute_app_command,
@@ -18,6 +13,8 @@ from .system_control import (
     execute_screenshot_command,
     execute_ip_command,
     execute_internet_speed_command,
+    execute_start_menu_command,
+    execute_explorer_command,
 )
 
 from .window_manager import (
@@ -27,6 +24,7 @@ from .window_manager import (
 from .file_operations import (
     execute_file_command,
     execute_folder_command,
+    find_file,  # Публичная функция для поиска файлов
 )
 
 from .web_commands import (
@@ -44,6 +42,16 @@ from .time_commands import (
     set_speak_callback,
     stop_timer_ring,
     is_timer_ringing,
+    set_shutdown_event as set_reminder_shutdown_event,
+)
+
+from .scheduled_apps import (
+    execute_scheduled_app_command,
+    start_app_scheduler,
+    set_speak_callback as set_scheduled_speak_callback,
+    set_open_app_callback,
+    set_close_app_callback,
+    set_shutdown_event as set_app_scheduler_shutdown_event,
 )
 
 from .power_manager import (
@@ -81,6 +89,9 @@ HANDLERS = (
     # Питание (ПЕРЕД приложениями, чтобы "выключи компьютер" не путалось с закрытием приложений)
     execute_power_command,
     
+    # Запланированный запуск (ПЕРЕД обычным запуском, чтобы "запусти в 2:05" не запускало сразу)
+    execute_scheduled_app_command,
+    
     # Приложения
     execute_predefined_command,
     execute_browser_command,
@@ -88,6 +99,8 @@ HANDLERS = (
     execute_app_command,
     
     # Система
+    execute_start_menu_command,
+    execute_explorer_command,
     execute_taskmanager_command,
     execute_volume_command,
     execute_brightness_command,
@@ -111,6 +124,11 @@ __all__ = [
     'set_speak_callback',
     'stop_timer_ring',
     'is_timer_ringing',
-    'execute_user_name_command',  # For agent.py partial
+    'execute_user_name_command',
+    'start_app_scheduler',
+    'set_scheduled_speak_callback',
+    'set_open_app_callback',
+    'set_reminder_shutdown_event',
+    'set_app_scheduler_shutdown_event',
 ]
 

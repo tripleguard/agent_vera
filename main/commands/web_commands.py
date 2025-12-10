@@ -1,9 +1,9 @@
 import re
 import webbrowser
-import difflib
 from typing import Optional, List
 
 from main.config_manager import get_config
+from main.utils.fuzzy import fuzzy_match_best
 
 _config = get_config()
 SITES_CFG = _config.get("sites", default={})
@@ -35,7 +35,7 @@ def execute_open_site_command(text: str) -> Optional[str]:
     if not tail:
         return None
     
-    best_key = _fuzzy_match(tail, SITES_CFG)
+    best_key = fuzzy_match_best(tail, SITES_CFG.keys(), key=lambda k: k, threshold=0.6)
     if best_key:
         try:
             webbrowser.open(SITES_CFG[best_key], new=2)
@@ -71,23 +71,6 @@ def execute_ambiguous_clean_command(text: str) -> Optional[str]:
         return "Уточните, что очистить: например, 'очисти корзину'."
     
     return None
-
-
-def _fuzzy_match(query: str, candidates: dict, threshold: float = 0.6) -> Optional[str]:
-    """Нечёткое сопоставление запроса со словарём кандидатов."""
-    best_key, best_score = None, 0.0
-    query_low = query.lower()
-    
-    for key in candidates:
-        key_low = key.lower()
-        score = difflib.SequenceMatcher(None, query_low, key_low).ratio()
-        if query_low in key_low:
-            score += 0.15
-        if score > best_score:
-            best_score = score
-            best_key = key
-    
-    return best_key if best_score >= threshold else None
 
 
 def _safe_open_url(url: str) -> bool:

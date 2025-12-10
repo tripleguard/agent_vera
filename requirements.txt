@@ -11,5 +11,6 @@ pywin32
 win11toast
 screen-brightness-control
 Pillow
-pystray
-aiohttp
+python-docx
+pypdf
+telethon
